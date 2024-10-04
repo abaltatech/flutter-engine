@@ -1,0 +1,95 @@
+
+
+name: Build Flutter Engine
+
+on:
+  push:
+    branches:
+      - experimental
+
+
+jobs:
+  build:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: 
+          - mode: '--unoptimized --runtime-mode=debug'
+            prefix: host_debug_unopt
+          - mode: '--unoptimized --runtime-mode=release'
+            prefix: host_release_unopt
+          - mode: '--ios --runtime-mode=release'
+            prefix: ios_release
+          
+          # TODO: 
+          # - '--unoptimized --runtime-mode=profile'
+          # - '--ios --unoptimized --runtime-mode=debug'
+          # - '--ios --unoptimized --runtime-mode=profile'
+          # - '--ios --unoptimized --runtime-mode=release'
+          # - '--ios --runtime-mode=debug'
+          # - '--ios --runtime-mode=profile'
+    steps:
+
+      - name: Setup depot_tools
+        shell: bash
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+
+          echo "${{ github.workspace}}/depot_tools"  >> $GITHUB_PATH
+
+      - name: Checkout source
+        shell: bash
+        run: |
+          mkdir -p engine
+          cat > engine/.gclient <<- EOF
+          solutions = [
+            {
+              "managed": False,
+              "name": "src/flutter",
+              "url": "https://github.com/abaltatech/flutter-engine.git",
+              "custom_deps": {},
+              "deps_file": "DEPS",
+              "safesync_url": "",
+            },
+          ]
+          EOF
+
+      - name: Setup environment
+        shell: bash
+        working-directory: engine
+        run: | 
+          gclient sync
+
+      # TODO: fix github.ref checkout
+      - name: Fetch source
+        shell: bash
+        working-directory: engine/src/flutter
+        run: |
+          git checkout experimental
+          # git checkout ${{ github.ref }}
+
+      - name: Re-fetch dependencies
+        shell: bash
+        working-directory: engine
+        run: |
+          gclient sync
+
+      - name: Generate build files
+        shell: bash
+        working-directory: engine/src
+        run: | 
+          ./flutter/tools/gn ${{ matrix.mode }}
+
+      - name: Build
+        shell: bash
+        working-directory: engine/src
+        run: |
+          find out -mindepth 1 -maxdepth 1 -type d | xargs -n 1 sh -c 'ninja -C $0 || exit 255'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.prefix }}
+          path: |
+            engine/src/out/*/*.xcframework
+            engine/src/out/*/gen_snapshot*
